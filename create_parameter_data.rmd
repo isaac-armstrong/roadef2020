@@ -1,0 +1,313 @@
+---
+title: 'ROADEF'
+author: 
+-  Isaac Armstrong
+date: 2020-08-05
+
+output: 
+  rmdformats::html_clean:
+    code_folding : hide # Want the code to be available but not visible by default.
+    df_print: paged # tables are printed as HTML tables w/ support for pagination over rows and columns. 
+    toc: true # table of content true
+    toc_depth: 3  # upto three depths of headings (specified by #, ## and ###)
+    toc_float: true #float table of contents to left of main document
+    number_sections: true  ## if you want number sections at each table header
+    theme: united  # many options for theme, this one is my favorite.
+    highlight: tango  # specifies the syntax highlighting style
+    gallery: TRUE
+    use_bookdown: TRUE #extends math and supports references (not just math)
+
+
+params: # Parameters that may be supplied externally
+  data: file.csv 
+  output_dir: './output/'
+  title: "NULL"
+  printcode: TRUE
+
+
+---
+
+
+```{r global_options, include=FALSE}
+
+# This is useful when you want to turn all warnings or messages off. 
+# To set global options that apply to every chunk in your file, call
+# knitr::opts_chunk$set in a code chunk. Knitr will treat each option that you
+# pass to knitr::opts_chunk$set as a global default that can be overwritten in
+# individual chunk headers.
+
+# NOTE If you notice odd behavior, it could be due to the cache. Side effects
+# such as library loading, knitr options may not be good for caching. You can
+# use local caching options to override when appropriate. Consider checking out
+# autodepends and dependsOn.
+
+# NOTE "R Markdown notebook chunks are rendered to an internal RStudio cache,
+# which is unrelated to knitr's cache."" 
+
+options(max.print="75")
+knitr::opts_chunk$set(
+    fig.width = 12,
+    fig.height = 8,
+    fig.path = "Figs/",
+    echo = FALSE,
+    warning = FALSE,
+    message = FALSE,
+    tidy = TRUE #Tidy code for display
+    # cache = TRUE, #cache results for future knits
+    # cache.path = cache/analysis
+)
+
+
+```
+
+```{r import}
+
+rm(list = ls())
+
+library(Rcpp)
+library(rstanarm)
+library(bayesplot)
+
+library(lubridate)
+library(Hmisc)
+library(stringr)
+library(UpSetR)
+library(ggplot2)
+library(knitr)
+library(data.table)
+
+library(stargazer)
+
+library(cluster)
+library(plotly)
+library(factoextra)
+library(tidyr)
+library(DT)
+
+library(tools)
+library(jsonlite)
+```
+
+
+```{r initial_read}
+
+get_problems <- function(dir = "A_set") {
+    files <- list.files(dir, include.dirs = T, full.names = T)
+    absolute_paths <- sapply(files, file_path_as_absolute)
+    json_no_flatten <- lapply(absolute_paths, fromJSON)
+    return(json.no.flatten)
+}
+
+load("~/Desktop/notes/notes/challenge-roadef-2020/json_no_flatten.RData")
+```
+
+```{r analysis_summarize_problem  }
+
+get_intervention_risk <- function(intervention) {
+    risk <- unlist(intervention$risk)
+    return(risk)
+}
+
+summarize_problem <- function(x) {
+    min_scenario_num <- min(x$Scenarios_number)
+    max_scenario_num <- max(x$Scenarios_number)
+    mean_scenario_num <- mean(x$Scenarios_number)
+    horizon <- x$T
+    quantile <- x$Quantile
+    alpha = x$Alpha
+    num_exclusions <- length(x$Exclusions)
+    num_resources <- length(x$Resources)
+    computation_time <- x$ComputationTime
+    num_interventions <- length(x$Interventions)
+    intervention_risks <- lapply(x$Interventions, get_intervention_risk)
+    all_risks <- unlist(intervention_risks)
+
+    num_risk_parameters <- length(all_risks)
+    print(length(intervention_risks))
+    print(num_risk_parameters)
+
+    risk_sd <- sd(all_risks)
+    min_risk <- min(all_risks)
+    max_risk <- max(all_risks)
+    summary <- list(
+        horizon = horizon,
+        num_interventions = num_interventions,
+        mean_scenario_num = mean_scenario_num,
+        risk_sd = risk_sd,
+        min_risk = min_risk,
+        max_risk = max_risk,
+        num_exclusions = num_exclusions,
+        quantile = quantile,
+        num_resources = num_resources,
+        min_scenario_num = min_scenario_num,
+        max_scenario_num = max_scenario_num,
+        computation_time = computation_time,
+        num_risk_parameters = num_risk_parameters,
+        alpha = alpha
+    )
+    return(summary)
+}
+
+summaries <- lapply(json.no.flatten, summarize_problem)
+problem_summaries <- do.call(rbind, summaries)
+# Get names before data.table removes them
+instance_names <- file_path_sans_ext(basename(rownames(problem_summaries)))
+
+# TODO This is really awful
+problem_summaries = as.data.table(unnest(as.data.table(problem_summaries)))
+problem_summaries[, instance := instance_names]
+
+datatable(problem_summaries)
+
+
+```
+
+```{r analysis_budget_curves  }
+
+Rcpp::sourceCpp("prob.cpp")
+
+```
+
+Let's make sure results match the 2 papers:
+
+```{r analysis_verify  }
+
+library(dplyr)
+
+# Important to hit both 0 and when n=k
+stopifnot(near(get_all_probability_constraint_violation(5, 0,pi), .695, .001)) # Want 0.695 pg. 4154 of robust_optimization_for_process
+stopifnot(near(get_all_probability_constraint_violation(5, 2.5,pi), .284, .001)) # Want 0.284 pg. 4154 robust_optimization_for_process
+stopifnot(near(get_all_probability_constraint_violation(5, 5,pi), .031, .001)) # Want 0.031 pg. 4154 robust_optimization_for_process
+# More relaxed bound on this one as floating point is close to what they have but not enough for .001 tolerance. Not a concern though. We're getting .450076.
+stopifnot(near(get_all_probability_constraint_violation(200, 2.8,pi), 4.49 * 10^-1, .01)) # Want 4.49*10^-1 pg.46 of price_of_robustness
+
+test = get_all_probability_constraint_violation(5,
+                                                c(0,2.5,5),
+                                                pi)
+expected = c(.695,.284,.031)
+
+stopifnot(all(near(test,expected,.001)))
+
+
+```
+
+```{r analysis_knapsack_budget_plot  }
+
+get_budget_data <- function (num_uncertain_coefficients,ubound_budget) {
+
+    # Why ubound? In practice, it's rarely useful to actually compute all
+    # possible values of the budget parameter. With 17 million coefficients,
+    # 15000 budget gets you below 1% probability of violation.
+
+    # We want user to offer a cutoff for the sake of computation time, but we
+    # don't want them to violate the theorem. 
+
+    ubound_budget = min(num_uncertain_coefficients,ubound_budget)
+    budget_range = 0:ubound_budget
+
+    budget_data <- data.frame(
+        budget = budget_range,
+        violation_prob = get_all_probability_constraint_violation(
+            num_uncertain_coefficients,
+            budget_range, pi
+        )
+    )
+    return(budget_data)
+
+}
+
+plot_budget <- function (num_uncertain_coefficients,ubound_budget, subtitle = "") {
+
+    budget_data = get_budget_data(num_uncertain_coefficients,ubound_budget)
+    budget_plot <- ggplot(data = budget_data, aes(
+        x = budget,
+        y = violation_prob
+    )) +
+        geom_line() +
+        theme_bw() +
+        theme(
+            axis.text.x = element_text(size = 14),
+            axis.text.y = element_text(size = 14),
+            legend.position = "bottom",
+            text = element_text(size = 14)
+        ) + labs(x = "Budget Parameter",
+               y = "Probability of Constraint Violation ([0,1])",
+               title = "What should the uncertainty budget be set to?",
+               subtitle = subtitle,
+               caption = "Budget in [0, Number of Uncertain Parameters in Constraint]") 
+    return(list(plot=budget_plot,data=budget_data))
+
+}
+
+write_rdata = F
+
+if (write_rdata) {
+    UBOUND_BUDGET <- 11000
+
+    # get_all_probability_constraint_violation(17595360,0:20,pi)
+
+    # get_budget_data(17595360,4000)
+
+    budget_evaluation <- list()
+
+    # Start with the smallest
+    setorder(problem_summaries, num_risk_parameters)
+
+    for (row in 1:nrow(problem_summaries)) {
+        has_multiple_scenarios <- problem_summaries$max_scenario_num[[row]] > 1
+        if (has_multiple_scenarios) {
+            instance_name <- problem_summaries$instance[[row]]
+            print(paste("Starting budget calculation:", instance_name))
+            num_uncertain_coefficients <- problem_summaries$num_risk_parameters[[row]]
+            instance_budget <- get_budget_data(num_uncertain_coefficients, UBOUND_BUDGET)
+
+            save(instance_budget,
+                file = paste0(
+                    instance_name,
+                    "_",
+                    UBOUND_BUDGET,
+                    "_parameter_budget.RData"
+                )
+            )
+
+            print(paste("Completed budget calculation:", instance_name))
+            budget_evaluation[[instance_name]] <- instance_budget
+        }
+    }
+}
+```
+
+
+
+
+#### Which instances seem to be of interest? ####
+
+We're going to ignore cases where there is only one scenario. Number of
+resources doesn't seem to be a factor as they are all around 9-10. Variance
+seems more useful than min or max scenario.
+
+* **High risk variance.** 2, 13,14,15, maybe 10 (6 scenarios), 11
+* **High scenario.** 8,11,15,14,2,5,13
+* **High horizon.** 5,2,13,11,15,14,10
+* **High number of interventions.** 5,6,13,15,14,10,3
+
+```{r analysis_common_instances  }
+
+high_variance <- c(2, 13, 14, 15, 10, 11)
+high_scenario <- c(8, 11, 15, 14, 2, 5, 13)
+high_horizon <- c(5, 2, 13, 11, 15, 14, 10)
+high_num_interventions <- c(5, 6, 13, 15, 14, 10, 3)
+
+table(c(high_variance, high_scenario, high_horizon, high_num_interventions))
+```
+
+Where should we start?
+
+* Ideal: 2,8,5,6 are representative of all 4 categories.
+* Start: 13,10
+
+#### Session Information ####
+```{r assign_session_info  }
+sessionInfo()
+```
+

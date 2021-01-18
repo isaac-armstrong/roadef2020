@@ -1,0 +1,552 @@
+---
+title: 'ROADEF'
+author: 
+-  Isaac Armstrong
+date: 2020-08-08
+
+output: 
+  rmdformats::html_clean:
+    code_folding : hide # Want the code to be available but not visible by default.
+    df_print: paged # tables are printed as HTML tables w/ support for pagination over rows and columns. 
+    toc: true # table of content true
+    toc_depth: 3  # upto three depths of headings (specified by #, ## and ###)
+    toc_float: true #float table of contents to left of main document
+    number_sections: true  ## if you want number sections at each table header
+    theme: united  # many options for theme, this one is my favorite.
+    highlight: tango  # specifies the syntax highlighting style
+    gallery: TRUE
+    use_bookdown: TRUE #extends math and supports references (not just math)
+
+
+
+---
+
+
+```{r global_options, include=FALSE}
+
+# This is useful when you want to turn all warnings or messages off. 
+# To set global options that apply to every chunk in your file, call
+# knitr::opts_chunk$set in a code chunk. Knitr will treat each option that you
+# pass to knitr::opts_chunk$set as a global default that can be overwritten in
+# individual chunk headers.
+
+# NOTE If you notice odd behavior, it could be due to the cache. Side effects
+# such as library loading, knitr options may not be good for caching. You can
+# use local caching options to override when appropriate. Consider checking out
+# autodepends and dependsOn.
+
+# NOTE "R Markdown notebook chunks are rendered to an internal RStudio cache,
+# which is unrelated to knitr's cache."" 
+
+options(max.print="75")
+knitr::opts_chunk$set(
+    fig.width = 12,
+    fig.height = 8,
+    fig.path = "Figs/",
+    echo = FALSE,
+    warning = FALSE,
+    message = FALSE,
+    tidy = TRUE #Tidy code for display
+    # cache = TRUE, #cache results for future knits
+    # cache.path = cache/analysis
+)
+
+
+```
+
+```{r import}
+
+rm(list = ls())
+
+library(rstanarm)
+library(bayesplot)
+
+library(lubridate)
+library(Hmisc)
+library(stringr)
+library(UpSetR)
+library(ggplot2)
+library(knitr)
+library(data.table)
+
+library(stargazer)
+
+library(cluster)
+library(plotly)
+library(factoextra)
+library(tidyr)
+library(DT)
+library(jsonlite)
+```
+
+```{r initial_read}
+
+budget_env = new.env()
+load(file="~/Desktop/notes/notes/challenge-roadef-2020/json_no_flatten.RData",envir = budget_env)
+
+```
+
+```{r analysis_load_budget_parameters  }
+
+a8_env <- new.env()
+load(
+    file = "~/Desktop/notes/notes/challenge-roadef-2020/backup_budget_parameter/A_08_11000_parameter_budget.RData",
+    envir = a8_env
+)
+
+a5_env <- new.env()
+load(
+    file = "~/Desktop/notes/notes/challenge-roadef-2020/backup_budget_parameter/A_05_11000_parameter_budget.RData",
+    envir = a5_env
+)
+
+a2_env <- new.env()
+load(
+    file = "~/Desktop/notes/notes/challenge-roadef-2020/backup_budget_parameter/A_02_11000_parameter_budget.RData",
+    envir = a2_env
+)
+
+a8_budget_prob <- a8_env$instance_budget
+a8_budget_prob$instance <- "A_08"
+
+a5_budget_prob <- a5_env$instance_budget
+a5_budget_prob$instance <- "A_05"
+
+a2_budget_prob <- a2_env$instance_budget
+a2_budget_prob$instance <- "A_02"
+
+
+```
+
+A12 and A13 work, but may not have enough dadta to talk about due to mip gaps and low uncertain budget parameter. It's not clear what to say about the results.
+```{r analysis_read_metadata  }
+
+solution_dirs <- list(
+    a14 = "~/Desktop/notes/notes/challenge-roadef-2020/roadef/2020_08_09_05_14_48/A_14/",
+    a5 = "~/Desktop/notes/notes/challenge-roadef-2020/roadef/2020_08_08_02_41_10/A_05/",
+    a2 = "~/Desktop/notes/notes/challenge-roadef-2020/roadef/2020_08_08_00_53_33/A_02/",
+    a8 = "~/Desktop/notes/notes/challenge-roadef-2020/roadef/2020_08_08_00_45_33/A_08/",
+    a8_fine = "~/Desktop/notes/notes/challenge-roadef-2020/roadef/2020_08_09_01_06_49/A_08/",
+    a2_fine = "~/Desktop/notes/notes/challenge-roadef-2020/roadef/2020_08_08_17_24_11/A_02/",
+    a5_fine = "~/Desktop/notes/notes/challenge-roadef-2020/roadef/2020_08_08_20_28_53/A_05/",
+    a5_sweep3 = "~/Desktop/notes/notes/challenge-roadef-2020/roadef/2020_08_09_03_28_16/A_05/",
+    a8_sweep3 = "~/Desktop/notes/notes/challenge-roadef-2020/roadef/2020_08_09_03_28_05/A_08/",
+    #    a13_dir_sweep = "roadef/2020_08_08_16_04_30/A_13/",
+    #    a13_dir = "roadef/2020_08_09_12_44_33/A_13/",
+    a11_dir = "~/Desktop/notes/notes/challenge-roadef-2020/roadef/2020_08_09_18_06_48/A_11/",
+    a10_dir_fine = "~/Desktop/notes/notes/challenge-roadef-2020/roadef/2020_08_09_17_37_36/A_10/",
+    a10_dir = "~/Desktop/notes/notes/challenge-roadef-2020/roadef/2020_08_08_16_01_20/A_10/",
+    #    a12_dir = "~/Desktop/notes/notes/challenge-roadef-2020/roadef/2020_08_09_17_37_19/A_12/",
+    a7_dir = "~/Desktop/notes/notes/challenge-roadef-2020/roadef/2020_08_09_17_37_09/A_07/",
+    a9_dir = "~/Desktop/notes/notes/challenge-roadef-2020/roadef/2020_08_09_17_37_02/A_09/",
+    a10_dir_0 = "~/Desktop/notes/notes/challenge-roadef-2020/roadef/2020_08_09_21_52_07/A_10/",
+    a11_dir_0 = "~/Desktop/notes/notes/challenge-roadef-2020/roadef/2020_08_09_21_47_13/A_11/"
+)
+
+
+# TODO awful code by repeatedly appending
+metadata <- data.frame()
+resources <- data.table()
+solutions <- data.table()
+
+for (solution_dir in solution_dirs) {
+
+    dirs <- sort(list.dirs(solution_dir))
+
+    # TODO Ultra ugly way to remove current directory and top level robust
+    # directory from the list
+    dirs <- dirs[c(-1, -3)]
+
+    for (dir in dirs) {
+
+        metadata_path <- paste0(dir, "/", "metadata.json")
+        metadata_json <- fromJSON(metadata_path)
+        
+        # Null is not accepted by as.data.frame
+        if (is.null(metadata_json[["budget"]])) {
+            metadata_json[["budget"]] <- NA
+        }
+        mframe <- as.data.frame(metadata_json)
+        
+        metadata <- rbind(metadata, mframe)
+        
+        # TODO use rbindlist instead
+        resource_path <- paste0(dir, "/", "resources.csv")
+        resource <- fread(resource_path)
+        resources <- rbind(resources, resource)
+
+        solution_path <- paste0(dir, "/", "official_solution.txt")
+        solution <- fread(solution_path, col.names = c("Intervention", "Start"))
+        instance <- resource$instance[1]
+        solution_dir <- resource$solution_dir[1]
+        budget <- resource$budget[1]
+        type <- resource$type[1]
+
+        solution$instance <- instance
+        solution$solution_dir <- solution_dir
+        solution$budget <- budget
+        solution$type <- type
+
+        solutions <- rbind(solutions, solution)
+
+    }
+}
+
+# TODO Tacky conversion when maybe we should have just started here
+metadata = as.data.table(metadata)
+
+# We reran certain analysis to refine the parameter sweep but had runs that overlapped
+# with previous runs
+unique_runs = !duplicated(metadata[,.(instance,budget)])
+metadata = metadata[unique_runs]
+```
+
+```{r add_comparison}
+
+deterministic <- metadata[type == "deterministic", .(
+    deterministic_mean_risk = mean_risk_score,
+    deterministic_excess = expected_excess_score,
+    deterministic_obj = obj_score, instance
+)]
+metadata_w_comparison <- merge(metadata,
+    deterministic,
+    by = c("instance"),
+    all.x = T
+)
+metadata_w_comparison[, c(
+    "diff_mean",
+    "diff_excess",
+    "diff_obj"
+) := list(
+    (mean_risk_score - deterministic_mean_risk) / deterministic_mean_risk,
+    (expected_excess_score - deterministic_excess) / deterministic_excess,
+    (obj_score - deterministic_obj) / deterministic_obj
+)]
+stopifnot(nrow(metadata_w_comparison) == nrow(metadata))
+metadata <- metadata_w_comparison
+
+```
+
+# Budget Parameter Analysis
+
+```{r budget_probability}
+
+
+ggplot(data = a8_budget_prob, aes(x = budget, y = violation_prob)) +
+    geom_line() +
+    labs(
+        x = "Uncertainty Budget",
+        y = "Pr(Realized Objective Value > Model Objective)",
+        title = "How likely is it that results are worse than expected?",
+        subtitle = "Uncertainty Budget and Probabilistic Guarantees",
+        caption = "Assumes symmetric distribution for risk assessments"
+    ) +
+    theme_bw() +
+    theme(
+        axis.text.x = element_text(size = 14),
+        axis.text.y = element_text(size = 14),
+        legend.position = "bottom",
+        text = element_text(size = 14)
+    ) + scale_y_continuous(labels = scales::percent)
+
+
+```
+
+# Deterministic Model Analysis
+
+```{r analysis_deterministic}
+
+# Solution time
+# MIPGap
+
+```
+
+
+# Robust Model Analysis
+
+```{r robust_subset}
+metadata[,.(instance,type,budget,mean_risk_score,expected_excess_score,obj_score)][order(instance,type,budget)]
+
+```
+
+```{r solution_quality_robust_time  }
+
+
+ggplot(data = metadata, aes(x = budget, y = runtime, color = instance)) +
+    geom_point() +
+    geom_line() +
+    labs(
+        x = "Uncertainty Budget",
+        y = "Runtime (sec)",
+        title = "What's the relationship between budget and runtime?",
+        caption = "15 minute time limit"
+    ) +
+    theme_bw() +
+    theme(
+        axis.text.x = element_text(size = 14),
+        axis.text.y = element_text(size = 14),
+        legend.position = "bottom",
+        text = element_text(size = 14)
+    ) +
+    labs(color = "Instance")+
+  xlim(0,130)
+    
+
+```
+
+```{r solution_quality_mipgap_robust  }
+
+ggplot(data = metadata, aes(x = budget, y = MIPGap, color = instance)) +
+    geom_point() +
+    geom_line() +
+    labs(
+        x = "Uncertainty Budget",
+        y = "MIP Gap",
+        title = "Does the uncertainty budget affect solution quality?",
+        subtitle = "Uncertainty Budget vs. MIP Gap",
+        caption = "Increased uncertainty budget increases size of model."
+    ) +
+    theme_bw() +
+    theme(
+        axis.text.x = element_text(size = 14),
+        axis.text.y = element_text(size = 14),
+        legend.position = "bottom",
+        text = element_text(size = 14)
+    ) +
+    labs(color = "Instance") +
+    scale_y_continuous(labels = scales::percent) +
+    xlim(0, 3000)
+    
+
+```
+```{r analysis_resources}
+
+# Consider number of interventions scheduled on a day
+
+# Consider whether there is a preference for days with fewer or more resources
+    
+
+
+```
+
+What's the relationship between budget and solution quality?
+
+det-rob/det. Positive is good ecause det>rob, 0 no diff, negative bad.
+rob-det/det. Negative is good ecause det>rob, 0 no diff, positive bad.
+```{r solution_quality_comparison  }
+
+metadata
+ggplot(metadata[type == "robust", ], aes(
+    x = budget,
+    y = diff_excess,
+    color = instance
+)) +
+    geom_line() + labs(
+    x = "Uncertainty Budget",
+    y = "Reduction of Expected Excess Risk",
+    title = "Can we manage the variability of risk assessments better with a robust model?",
+    subtitle = "Compare deterministic model to each budget model",
+    caption = "Negative indicates robust model successfully controlled variability"
+) + theme_bw() + theme(
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+    legend.position = "bottom",
+    text = element_text(size = 14)) + 
+        labs(color='Instance') +
+        scale_y_continuous(labels = scales::percent)+ xlim(0,100)
+
+
+ggplot(metadata[type == "robust", ], aes(
+    x = budget,
+    y = diff_mean,
+    color = instance
+)) +
+    geom_line() + labs(
+    x = "Uncertainty Budget",
+    y = "Reduction of Mean Risk",
+    title = "How does the robust model affect the mean risk?",
+    subtitle = "Compare deterministic model to each budget model",
+    caption = "Negative indicates robust model improved mean risk component of objective"
+) + theme_bw() + theme(
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+    legend.position = "bottom",
+    text = element_text(size = 14)) + 
+        labs(color='Instance') +
+        scale_y_continuous(labels = scales::percent) + xlim(0,100)
+
+
+ggplot(metadata[type == "robust", ], aes(
+    x = budget,
+    y = diff_obj,
+    color = instance
+)) +
+    geom_line() + labs(
+    x = "Uncertainty Budget",
+    y = "Objective Function Value",
+    title = "How does the robust model affect the objective function?",
+    subtitle = "Compare deterministic model to each budget model",
+    caption = "Negative indicates robust model improved the objective function"
+) + theme_bw() + theme(
+    axis.text.x = element_text(size = 14),
+    axis.text.y = element_text(size = 14),
+    legend.position = "bottom",
+    text = element_text(size = 14) )+ 
+        labs(color='Instance') +
+        scale_y_continuous(labels = scales::percent)+xlim(0,100)
+
+
+```
+
+```{r intervention_distribution}
+
+# We have duplicate deterministic directories and need to choose one
+a5sub <- solutions[instance == "A_05" & (solution_dir == "~/Desktop/notes/notes/challenge-roadef-2020/roadef/2020_08_08_02_41_10/A_05/deterministic/" | budget == 8551)][, .N,
+    by = .(
+        Start,
+        type,
+        budget
+    )
+]
+
+# When do we have the largest number of resources?
+# How does this relate to the risk at the timestep?
+ggplot(data = a5sub, aes(
+    x = Start,
+    y = N,
+    colour = type
+)) +
+    geom_point() +
+    geom_line() +
+    labs(
+        x = "Timestep",
+        y = "Number of Interventions ",
+        title = "How different is a conservative model from the deterministic point estimate model?"
+    ) +
+    theme_bw() +
+    theme(
+        axis.text.x = element_text(size = 14),
+        axis.text.y = element_text(size = 14),
+        legend.position = "bottom",
+        text = element_text(size = 14)
+    )
+    
+    
+
+
+```
+
+```{r analysis_robust_excess}
+
+ggplotly(ggplot(metadata[type == "robust" & instance == "A_08", ], aes(
+    x = budget,
+    y = expected_excess_score,
+    color = instance
+)) +
+    geom_point() +
+    geom_line())
+
+ggplotly(ggplot(metadata[type == "robust" & instance == "A_05", ], aes(
+    x = budget,
+    y = expected_excess_score,
+    color = instance
+)) +
+    geom_point() +
+    geom_line())
+
+ggplotly(ggplot(metadata[type == "robust" & instance == "A_02", ], aes(
+    x = budget,
+    y = expected_excess_score,
+    color = instance
+)) +
+    geom_point() +
+    geom_line())
+
+ggplotly(ggplot(metadata[type == "robust" & instance == "A_14", ], aes(
+    x = budget,
+    y = expected_excess_score,
+    color = instance
+)) +
+    geom_point() +
+    geom_line())
+
+```
+
+```{r solution_quality_robust_mean_risk  }
+
+ggplotly(ggplot(metadata[type == "robust" & instance == "A_08", ], aes(
+    x = budget,
+    y = mean_risk_score,
+    color = instance
+)) +
+    geom_point() +
+    geom_line())
+
+ggplotly(ggplot(metadata[type == "robust" & instance == "A_05", ], aes(
+    x = budget,
+    y = mean_risk_score,
+    color = instance
+)) +
+    geom_point() +
+    geom_line())
+
+ggplotly(ggplot(metadata[type == "robust" & instance == "A_02", ], aes(
+    x = budget,
+    y = mean_risk_score,
+    color = instance
+)) +
+    geom_point() +
+    geom_line())
+
+ggplotly(ggplot(metadata[type == "robust" & instance == "A_14", ], aes(
+    x = budget,
+    y = mean_risk_score,
+    color = instance
+)) +
+    geom_point() +
+    geom_line())
+
+```
+
+
+```{r solution_quality_robust_official_obj  }
+
+ggplotly(ggplot(metadata[type == "robust" & instance == "A_08", ], aes(
+    x = budget,
+    y = obj_score,
+    color = instance
+)) +
+    geom_point() +
+    geom_line())
+
+ggplotly(ggplot(metadata[type == "robust" & instance == "A_05", ], aes(
+    x = budget,
+    y = obj_score,
+    color = instance
+)) +
+    geom_point() +
+    geom_line())
+
+ggplotly(ggplot(metadata[type == "robust" & instance == "A_02", ], aes(
+    x = budget,
+    y = obj_score,
+    color = instance
+)) +
+    geom_point() +
+    geom_line())
+
+ggplotly(ggplot(metadata[type == "robust" & instance == "A_14", ], aes(
+    x = budget,
+    y = obj_score,
+    color = instance
+)) +
+    geom_point() +
+    geom_line())
+
+```
+
+#### Session Information ####
+```{r assign_session_info  }
+sessionInfo()
+```
+
